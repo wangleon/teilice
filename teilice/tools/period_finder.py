@@ -188,11 +188,16 @@ class MainWindow(tk.Frame):
     def check_folded_exists(self, tic):
 
         file_path = None
-        for fname in os.listdir(self.folded_path):
+        subfolder = '{:02d}'.format(tic%100)
+        _path = os.path.join(self.folded_path, subfolder)
+        if not os.path.exists(_path):
+            return None
+
+        for fname in os.listdir(_path):
             mobj = re.match('foldedlc\-(\d+)_s(\d+)_s(\d+)\.fits', fname)
             if mobj:
                 if int(mobj.group(1)) == tic:
-                    file_path = os.path.join(self.folded_path, fname)
+                    file_path = os.path.join(self.folded_path, _path, fname)
                     break
         return file_path
 
@@ -2729,16 +2734,17 @@ class SourceFrame(tk.Frame):
         self.source_changed = True
         self.save_button['state'] = tk.NORMAL
 
-
+        # save folded FITS
+        subfolder = '{:02d}'.format(mainwin.tic%100)
         fname = 'foldedlc-{:012d}_s{:03d}_s{:03d}.fits'.format(
                 mainwin.tic, s1, s2)
-        filename = mainwin.folded_path / fname
+        filename = mainwin.folded_path / subfolder / fname
         self.save_fits(filename)
 
         # save foleded figures
         figname = 'fig-fold-{:012d}_s{:03d}_s{:03d}.png'.format(
                 mainwin.tic, s1, s2)
-        figfilename = mainwin.figure_path / figname
+        figfilename = mainwin.figure_path / subfolder / figname
         mainwin.plot_frame.fig.savefig(figfilename)
 
     def save_fits(self, filename):
@@ -3082,14 +3088,16 @@ def launch(source_filename, datapool, figure_path=None, folded_path=None):
 
     # prepare figure path
     if figure_path is None:
-        figure_path = Path('./figures').resolve()
+        _path = os.path.join(datapool, 'foldedlc')
+        figure_path = Path(_path).resolve()
     else:
         figure_path = Path(figure_path).resolve()
     figure_path.mkdir(parents=True, exist_ok=True)
 
     # prepare folded light curve path
     if folded_path is None:
-        folded_path = Path('./folded').resolve()
+        _path = os.path.join(datapool, 'foldedlc')
+        folded_path = Path(_path).resolve()
     else:
         folded_path = Path(folded_path).resolve()
     folded_path.mkdir(parents=True, exist_ok=True)

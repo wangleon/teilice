@@ -2132,6 +2132,8 @@ class ControlPanel(tk.Frame):
             # secondary eclipse invisible
             self.zoomin_secwin_button['state'] = tk.DISABLED
             self.zoomout_secwin_button['state'] = tk.DISABLED
+            # autoperiod option = 'primary'
+            self.autoperiod_options.set('primary')
             # secondary phase buttons
             for key, button in self.add_secphase_buttons.items():
                 button['state'] = tk.DISABLED
@@ -2146,6 +2148,8 @@ class ControlPanel(tk.Frame):
             # secondary eclipse visible
             self.zoomin_secwin_button['state'] = tk.NORMAL
             self.zoomout_secwin_button['state'] = tk.NORMAL
+            # autoperiod option = 'both'
+            self.autoperiod_options.set('both')
             # secondary phase buttons
             for key, button in self.add_secphase_buttons.items():
                 button['state'] = tk.NORMAL
@@ -2443,10 +2447,18 @@ class SourceFrame(tk.Frame):
             
 
         tk.Frame.__init__(self, master, width=width, height=height)
-        
+
+        # total number
+        n_total = len(self.source_table)
+        # number of unfinished is number of items of which period is None
+        n_unfin = sum([v is np.ma.masked for v in self.source_table['Period']])
+        # number of finished items
+        n_fin = n_total - n_unfin
+        # set button text
+        text = 'Save List ({}/{})'.format(n_fin, n_total)
 
         self.save_button = tk.Button(master = self,
-                                    text    = 'Save List',
+                                    text    = text,
                                     width   = 150,
                                     command = self.save_source_table,
                                     state   = tk.DISABLED,
@@ -2730,21 +2742,39 @@ class SourceFrame(tk.Frame):
             if var.get():
                 self.source_table[flag][idx] = 1
 
+        # Step 3. update save button
         # activiate save button
         self.source_changed = True
+        # total number
+        n_total = len(self.source_table)
+        # number of unfinished is number of items of which period is None
+        n_unfin = sum([v is np.ma.masked for v in self.source_table['Period']])
+        # number of finished items
+        n_fin = n_total - n_unfin
+        self.save_button['text']  = 'Save List ({}/{})'.format(n_fin, n_total)
         self.save_button['state'] = tk.NORMAL
 
+
+        # Step 4. save FITS and folded figure
         # save folded FITS
         subfolder = '{:02d}'.format(mainwin.tic%100)
         fname = 'foldedlc-{:012d}_s{:03d}_s{:03d}.fits'.format(
                 mainwin.tic, s1, s2)
-        filename = mainwin.folded_path / subfolder / fname
+        # create new folder if subfolder does not exist
+        filepath = mainwin.folded_path / subfolder
+        filepath.mkdir(parents=True, exist_ok=True)
+        # save folded lc file
+        filename = filepath / fname
         self.save_fits(filename)
 
         # save foleded figures
         figname = 'fig-fold-{:012d}_s{:03d}_s{:03d}.png'.format(
                 mainwin.tic, s1, s2)
-        figfilename = mainwin.figure_path / subfolder / figname
+        # create new foldr if subfolder does ont exist
+        figpath = mainwin.figure_path / subfolder
+        figpath.mkdir(parents=True, exist_ok=True)
+        # save folded figure
+        figfilename = figpath / figname
         mainwin.plot_frame.fig.savefig(figfilename)
 
     def save_fits(self, filename):

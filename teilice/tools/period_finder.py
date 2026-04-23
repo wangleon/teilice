@@ -168,6 +168,7 @@ class MainWindow(tk.Frame):
         self.period_err = np.nan # period error
         self.t0     = np.nan     # t0
         self.t0_err = np.nan     # t0 error
+        self.subtype = ''        # subtype detached/contact
         self.secvis = True   # secondary eclips isible?
         self.secphase    = 0.5  # phase of secondary eclipse
         self.secphase_err = np.nan # seondary phase error
@@ -295,7 +296,9 @@ class MainWindow(tk.Frame):
             self.secwin_err = head['SECWIN_E']
 
         # set subtype (contact/detached)
-        control_panel.subtype.set(head['SUBTYPE'])
+        self.subtype = head['SUBTYPE']
+        #control_panel.subtype.set(self.subtype)
+        #control_panel.set_buttons_by_subtype(self.subtype)
 
         # set flags
         for flag, _ in control_panel.flags.items():
@@ -689,6 +692,11 @@ class MainWindow(tk.Frame):
         #self.plot()
         #self.plot_frame.canvas.draw()
 
+    def change_subtype(self, subtype):
+        self.subtype = subtype
+        self.plot()
+        self.plot_frame.canvas.draw()
+
     def change_urej(self, urej):
         self.display_urej = urej
         self.plot()
@@ -746,10 +754,14 @@ class MainWindow(tk.Frame):
         self.plot()
         self.plot_frame.canvas.draw()
 
-    def fit_period(self, option):
+    def fit_period(self, option, subtype):
 
         data_lst = self.prepare_parsed_lc()
-        nbins = 20
+
+        if subtype == 'detached':
+            nbins = 20
+        else:
+            nbins = 50
 
         param = {'npoints': 0, 'nbins': 0}
 
@@ -797,39 +809,51 @@ class MainWindow(tk.Frame):
             all_var_lst = []
             param['npoints'] = 0
             param['nbins'] = 0
-            if option == 'primary':
+            if subtype == 'contact':
+                # fit for contact binary
                 var_lst = get_var_lst(data_lst, period,
-                            -2*self.priwin,
-                            2*self.priwin,
+                            -0.5, 0.5,
                             nbins)
                 for v in var_lst:
                     all_var_lst.append(v)
                     param['nbins'] += 1
-
-            elif option == 'secondary':
-                var_lst = get_var_lst(data_lst, period,
-                            self.secphase-2*self.secwin,
-                            self.secphase+2*self.secwin,
-                            nbins)
-                for v in var_lst:
-                    all_var_lst.append(v)
-                    param['nbins'] += 1
-
-            elif option == 'both':
-                var_lst = get_var_lst(data_lst, period,
-                            -2*self.priwin,
-                            2*self.priwin,
-                            nbins)
-                for v in var_lst:
-                    all_var_lst.append(v)
-                    param['nbins'] += 1
-                var_lst = get_var_lst(data_lst, period,
-                            self.secphase-2*self.secwin,
-                            self.secphase+2*self.secwin,
-                            nbins)
-                for v in var_lst:
-                    all_var_lst.append(v)
-                    param['nbins'] += 1
+            else:
+                # fit for detached binary
+                if option == 'primary':
+                    var_lst = get_var_lst(data_lst, period,
+                                -2*self.priwin,
+                                2*self.priwin,
+                                nbins)
+                    for v in var_lst:
+                        all_var_lst.append(v)
+                        param['nbins'] += 1
+                
+                elif option == 'secondary':
+                    var_lst = get_var_lst(data_lst, period,
+                                self.secphase-2*self.secwin,
+                                self.secphase+2*self.secwin,
+                                nbins)
+                    for v in var_lst:
+                        all_var_lst.append(v)
+                        param['nbins'] += 1
+                
+                elif option == 'both':
+                    var_lst = get_var_lst(data_lst, period,
+                                -2*self.priwin,
+                                2*self.priwin,
+                                nbins)
+                    for v in var_lst:
+                        all_var_lst.append(v)
+                        param['nbins'] += 1
+                    var_lst = get_var_lst(data_lst, period,
+                                self.secphase-2*self.secwin,
+                                self.secphase+2*self.secwin,
+                                nbins)
+                    for v in var_lst:
+                        all_var_lst.append(v)
+                        param['nbins'] += 1
+                else:
+                    raise ValueError
 
             all_var_lst = np.array(all_var_lst)
             return all_var_lst.sum()
@@ -877,8 +901,14 @@ class MainWindow(tk.Frame):
 
 
             self.autoperiod_info = {'option': option, 'nbins': nbins}
+
             # will trigger plot() function here
             self.set_period(new_period, new_period_err)
+
+            if subtype == 'contact':
+                # find T0 and secondary eclipse phase for contact binaries
+                self.fit_contact()
+
             return True
         else:
             self.autoperiod_info = None
@@ -937,6 +967,7 @@ class MainWindow(tk.Frame):
             phase_lst = ((t_lst - self.t0)%self.period)/self.period
             # now phase_lst is between(0,1)
             newphase_lst = np.concatenate((phase_lst-1, phase_lst))
+            # now newphase_lst is between (-1, 1)
             newflux_lst  = np.concatenate((newf_lst, newf_lst))
             newmask_lst  = np.concatenate((m, m))
 
@@ -1161,6 +1192,100 @@ class MainWindow(tk.Frame):
 
         return succ
 
+    def fit_contact(self):
+        """ Determine T0 and phase of secondary eclipse for contact binaries.
+        """
+
+        data_lst = self.prepare_parsed_lc()
+
+        ph1, ph2 = 0, 1
+
+        # prepare phase list and allflux_lst to be fitted
+        nbins = 50
+        dphase = (ph2 - ph1)/nbins
+        ph_lst = {}
+        allph_lst = {}
+        allflux_lst = {}
+        for i in np.arange(nbins):
+            _ph1 = ph1 + i * dphase
+            _ph2 = _ph1 + dphase
+            ph_lst[i] = (_ph1, _ph2)
+            allph_lst[i] = []
+            allflux_lst[i] = []
+
+        for s, (m, newf_lst) in data_lst.items():
+            t_lst, f_lst = self.lc_lst[s]
+
+            if not self.sector_mask[s]:
+                continue
+
+            phase_lst = ((t_lst - self.t0)%self.period)/self.period
+
+            for i, (_ph1, _ph2) in ph_lst.items():
+                m1 = (phase_lst > _ph1) * (phase_lst < _ph2)
+                m0 = m * m1
+                
+                for _ph, _f in zip(phase_lst[m0], newf_lst[m0]):
+                    allph_lst[i].append(_ph)
+                    allflux_lst[i].append(_f)
+
+
+        x_lst = []
+        y_lst = []
+        ystd_lst = [] # ystd_lst is used to find the residual of fluxes
+        for i in np.arange(nbins):
+            x_lst.append(np.mean(allph_lst[i]))
+            y_lst.append(np.mean(allflux_lst[i]))
+            ystd_lst.append(np.std(allflux_lst[i], ddof=1))
+        x_lst = np.array(x_lst)
+        y_lst = np.array(y_lst)
+        ystd_lst = np.array(ystd_lst)
+        # now x_lst is between (0, 1)
+
+        fitx_lst = np.concatenate((x_lst, x_lst+1))
+        fity_lst = np.concatenate((y_lst, y_lst))
+        fitystd_lst = np.concatenate((ystd_lst, ystd_lst))
+
+        outfile = open('a.txt', 'w')
+        for _x, _y, _s in zip(fitx_lst, fity_lst, fitystd_lst):
+            outfile.write('{:16.10e} {:16.10e} {:16.10e}'.format(_x, _y, _s)+os.linesep)
+        outfile.close()
+
+
+        # build interpolate function
+        s = fitx_lst.size
+        func = intp.UnivariateSpline(fitx_lst, fity_lst, k=3, s=s)
+
+        # searching for T0
+        result1 = opt.minimize(func, x0=1.0, bounds=[(0.8,1.2)], tol=1e-7)
+        if result1.success:
+            minph = result1.x[0]
+            ph0 = minph - 1.0
+            self.t0 = self.t0 + ph0 * self.period
+            # find second order differential
+            eps = 1e-4
+            d2 = (func(minph+eps) - 2*func(minph) + func(minph-eps))/eps**2
+
+            residual_lst = fity_lst - func(fitx_lst)
+
+            sigmaf = np.std(residual_lst, ddof=1)
+            self.smooth_lst = (fitx_lst, fity_lst, func(fitx_lst))
+            minph_err = np.sqrt(2*sigmaf/d2)
+            self.t0_err = minph_err * self.period
+
+            # searching for secphase
+            result2 = opt.minimize(func, x0=0.5, bounds=[(0.3,0.7)], tol=1e-7)
+            if result2.success:
+                ph2 = result2.x[0]
+                self.secphase = ph2 - ph0
+                d2 = (func(ph2+eps) - 2*func(ph2) + func(ph2-eps))/eps**2
+                ph2_err = np.sqrt(2*sigmaf/d2)
+                self.secphase_err = ph2_err
+
+                self.plot_frame.control_panel.update_param()
+                self.plot()
+                self.plot_frame.canvas.draw()
+
 
     def plot(self):
 
@@ -1335,15 +1460,24 @@ class MainWindow(tk.Frame):
 
                 i1 = int((t1 - self.t0)/self.period)
                 i2 = int((t2 - self.t0)/self.period)
+                # plot primary line
                 for i in np.arange(i1, i2+1):
                     _t = self.t0 + i * self.period
                     ax.axvline(_t, 0, 1, c='r', ls='-',
-                            lw=0.5, alpha=0.2, zorder=-1)
+                            lw=0.5, alpha=0.2, zorder=-3)
+
+                # plot secondary line
                 if self.secvis and self.secphase is not np.nan:
                     for i in np.arange(i1-1, i2+1):
                         _t = self.t0 + (i + self.secphase) * self.period
                         ax.axvline(_t, 0, 1, c='b', ls='-',
-                                lw=0.5, alpha=0.2, zorder=-1)
+                                lw=0.5, alpha=0.2, zorder=-3)
+
+                # plot a black line indicating T0
+                if t1 < self.t0 < t2:
+                    ax.axvline(self.t0, 0, 1, c='k', ls='--',
+                                lw=0.6, alpha=0.5, zorder=-1)
+
 
 
         # plot determind period
@@ -1400,6 +1534,9 @@ class MainWindow(tk.Frame):
                     axsec.plot(phase_lst, newf_lst - _offset, 'o', color=color,
                                 mew=0, ms=1, alpha=0.6)
 
+        #if hasattr(self, 'smooth_lst'):
+        #    axphase.plot(self.smooth_lst[0], self.smooth_lst[1], 'o', c='k', ms=1)
+        #    axphase.plot(self.smooth_lst[0], self.smooth_lst[2], '-', c='k', lw=0.5)
         
         if self.model_curve['primary'] is not None:
             phase_lst, flux_lst = self.model_curve['primary']
@@ -1409,8 +1546,12 @@ class MainWindow(tk.Frame):
             axsec.plot(phase_lst, flux_lst, '-', lw=0.5, c='k', alpha=0.8)
        
         # set axpri range
-        axpri.set_xlim(1-self.priwin*2, 1+self.priwin*2)
-        axsec.set_xlim(self.secphase-self.secwin*2, self.secphase+self.secwin*2)
+        if self.subtype == 'contact':
+            axpri.set_xlim(0.5, 1.5)
+            axsec.set_xlim(0, 1.0)
+        else:
+            axpri.set_xlim(1-self.priwin*2, 1+self.priwin*2)
+            axsec.set_xlim(self.secphase-self.secwin*2, self.secphase+self.secwin*2)
 
         all_t_lst, all_f_lst = self.all_lc
         _y1, _y2 = axpri.get_ylim()
@@ -1425,34 +1566,37 @@ class MainWindow(tk.Frame):
         ylim = axphase.get_ylim()
         # plot primary eclipse zone in phase plot
         axphase.fill_betweenx(ylim, 1-self.priwin, 1+self.priwin,
-                color='r', alpha=0.1, lw=0)
+            color='r', alpha=0.1, lw=0)
         axphase.fill_betweenx(ylim, 0, self.priwin,
-                color='r', alpha=0.1, lw=0)
+            color='r', alpha=0.1, lw=0)
         axphase.fill_betweenx(ylim, 2-self.priwin, 2,
-                color='r', alpha=0.1, lw=0)
+            color='r', alpha=0.1, lw=0)
+
         if self.secvis:
             # plot secondary eclipse zone in phase plot
             axphase.fill_betweenx(ylim,
-                    self.secphase-self.secwin,  self.secphase+self.priwin,
-                    color='b', alpha=0.1, lw=0)
+                self.secphase-self.secwin,  self.secphase+self.priwin,
+                color='b', alpha=0.1, lw=0)
             axphase.fill_betweenx(ylim,
-                    1+self.secphase-self.secwin,  1+self.secphase+self.secwin,
-                    color='b', alpha=0.1, lw=0)
+                1+self.secphase-self.secwin,  1+self.secphase+self.secwin,
+                color='b', alpha=0.1, lw=0)
+
         # plot primary eclipse zone in primary plot
         axpri.axvline(1.0, c='r', ls='-', lw=0.5, alpha=0.1, zorder=-1)
         axpri.fill_betweenx(ylim, 1-self.priwin,  1+self.priwin,
-                color='r', alpha=0.1, lw=0, zorder=-2)
+            color='r', alpha=0.1, lw=0, zorder=-2)
 
-        # plot secondary eclipse zone in secondary plot
         axsec.axvline(self.secphase, c='b', ls='-', lw=0.5, alpha=0.1, zorder=-1)
+        # plot secondary eclipse zone in secondary plot
         if self.secvis:
             axsec.fill_betweenx(ylim,
-                    self.secphase-self.secwin,  self.secphase+self.secwin,
-                    color='b', alpha=0.1, lw=0, zorder=-2)
+                self.secphase-self.secwin,  self.secphase+self.secwin,
+                color='b', alpha=0.1, lw=0, zorder=-2)
+
+        # set ylim of phase, primary and secondary plots
         axphase.set_ylim(ylim)
         axpri.set_ylim(ylim)
         axsec.set_ylim(ylim)
-
 
         axpri.set_yticklabels([])
         axsec.set_yticklabels([])
@@ -1967,17 +2111,19 @@ class ControlPanel(tk.Frame):
         self.subtype = tk.StringVar(value='detached')
         self.subtype_rbs = {
                 'detached': tk.Radiobutton(self,
-                                    text     = 'Detached',
-                                    variable = self.subtype,
-                                    value    = 'detached',
-                                    state    = tk.DISABLED,
-                                    ),
+                                text     = 'Detached',
+                                variable = self.subtype,
+                                value    = 'detached',
+                                state    = tk.DISABLED,
+                                command  = lambda: self.change_subtype(),
+                                ),
                 'contact': tk.Radiobutton(self,
-                                    text     = 'Contact',
-                                    variable = self.subtype,
-                                    value    = 'contact',
-                                    state    = tk.DISABLED,
-                                    ),
+                                text     = 'Contact',
+                                variable = self.subtype,
+                                value    = 'contact',
+                                state    = tk.DISABLED,
+                                command  = lambda: self.change_subtype(),
+                                ),
                 }
 
 
@@ -2037,6 +2183,42 @@ class ControlPanel(tk.Frame):
                 sticky='ew', padx=5, pady=2)
 
         self.pack()
+
+    def set_buttons_by_subtype(self, subtype):
+        """Update buttons status according to subtype.
+        """
+        if subtype=='contact':
+            self.fit_ooe_button['state'] = tk.DISABLED
+            self.fitpri_button['state'] = tk.DISABLED
+            self.fitsec_button['state'] = tk.DISABLED
+            for key, rb in self.model_pri_rbs.items():
+                rb['state'] = tk.DISABLED
+            for key, rb in self.model_sec_rbs.items():
+                rb['state'] = tk.DISABLED
+        else:
+            self.fit_ooe_button['state'] = tk.NORMAL
+            self.fitpri_button['state'] = tk.NORMAL
+            self.fitsec_button['state'] = tk.NORMAL
+            for key, rb in self.model_pri_rbs.items():
+                rb['state'] = tk.NORMAL
+            for key, rb in self.model_sec_rbs.items():
+                rb['state'] = tk.NORMAL
+
+    def change_subtype(self):
+        subtype = self.subtype.get()
+        # set buttons accroding to subtype
+        self.set_buttons_by_subtype(subtype)
+
+        if subtype == 'contact':
+            mainwin = self.master.master
+            mainwin.secphase = 0.5
+            mainwin.priwin = 0.25
+            mainwin.secwin = 0.25
+
+        self.master.master.change_subtype(subtype)
+        self.params_changed = True
+        self.reset_button['state'] = tk.NORMAL
+        self.apply_button['state'] = tk.NORMAL
 
     def change_period(self, ratio):
         self.master.master.change_period(ratio)
@@ -2105,7 +2287,8 @@ class ControlPanel(tk.Frame):
 
     def fit_period_auto(self):
         option = self.autoperiod_options.get()
-        succ = self.master.master.fit_period(option)
+        subtype = self.subtype.get()
+        succ = self.master.master.fit_period(option, subtype)
         if succ:
             self.params_changed = True
             self.reset_button['state'] = tk.NORMAL
@@ -2448,14 +2631,8 @@ class SourceFrame(tk.Frame):
 
         tk.Frame.__init__(self, master, width=width, height=height)
 
-        # total number
-        n_total = len(self.source_table)
-        # number of unfinished is number of items of which period is None
-        n_unfin = sum([v is np.ma.masked for v in self.source_table['Period']])
-        # number of finished items
-        n_fin = n_total - n_unfin
-        # set button text
-        text = 'Save List ({}/{})'.format(n_fin, n_total)
+        # get save button text
+        text = self.get_savebutton_text()
 
         self.save_button = tk.Button(master = self,
                                     text    = text,
@@ -2538,6 +2715,21 @@ class SourceFrame(tk.Frame):
 
         self.pack()
 
+    def get_savebutton_text(self):
+        """Get the save button text according to the source table.
+        This does not refresh the button text.
+        """
+
+        # total number
+        n_total = len(self.source_table)
+        # number of unfinished is number of items of which period is None
+        n_unfin = sum([v is np.ma.masked for v in self.source_table['Period']])
+        # number of finished items
+        n_fin = n_total - n_unfin
+        # set button text
+        text = 'Save List ({}/{})'.format(n_fin, n_total)
+        return text
+
 
     def on_select_item(self, event):
         """Event handler when selecting a new item in source table.
@@ -2607,6 +2799,8 @@ class SourceFrame(tk.Frame):
             if row['subtype'] is not np.ma.masked \
                 and row['subtype'] in control_panel.subtype_rbs:
                 control_panel.subtype.set(row['subtype'])
+                mainwin.subtype = row['subtype']
+                control_panel.set_buttons_by_subtype(row['subtype'])
             
             # check the source table, and toggle the flag check buttons
             for flag, var in control_panel.flags.items():
@@ -2745,13 +2939,11 @@ class SourceFrame(tk.Frame):
         # Step 3. update save button
         # activiate save button
         self.source_changed = True
-        # total number
-        n_total = len(self.source_table)
-        # number of unfinished is number of items of which period is None
-        n_unfin = sum([v is np.ma.masked for v in self.source_table['Period']])
-        # number of finished items
-        n_fin = n_total - n_unfin
-        self.save_button['text']  = 'Save List ({}/{})'.format(n_fin, n_total)
+
+        # get save button text
+        text = self.get_savebutton_text()
+
+        self.save_button['text']  = text
         self.save_button['state'] = tk.NORMAL
 
 

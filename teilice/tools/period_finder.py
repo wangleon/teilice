@@ -718,7 +718,11 @@ class MainWindow(tk.Frame):
 
         if ~np.isnan(self.period) and ~np.isnan(self.t0) \
             and ~np.isnan(self.priwin) and ~np.isnan(self.secwin):
+
             for s, (t_lst, f_lst) in self.lc_lst.items():
+
+                # mask is an arrary marking the out-of eclipse positions.
+
                 mask = f_lst < np.percentile(f_lst, 99)
                 t1 = t_lst[0]
                 t2 = t_lst[-1]
@@ -742,7 +746,8 @@ class MainWindow(tk.Frame):
                         _m = (t_lst > _t1)*(t_lst < _t2)
                         mask[_m] = False
 
-                smx, smy = smooth_trend(t_lst[mask], f_lst[mask], self.period/self.detrendwin)
+                smx, smy = smooth_trend(t_lst[mask], f_lst[mask],
+                                win = self.period/self.detrendwin)
                 newf = intp.InterpolatedUnivariateSpline(smx, smy, k=3)
                 self.lc_trends[s] = newf(t_lst)
 
@@ -756,7 +761,7 @@ class MainWindow(tk.Frame):
 
     def fit_period(self, option, subtype):
 
-        data_lst = self.prepare_parsed_lc()
+        data_lst = self.parse_lc()
 
         if subtype == 'detached':
             nbins = 20
@@ -775,8 +780,7 @@ class MainWindow(tk.Frame):
                 allflux_lst = []
 
                 # loop for every sector
-                for s, (m, newf_lst) in data_lst.items():
-                    t_lst, f_lst = self.lc_lst[s]
+                for s, (t_lst, newf_lst, m) in data_lst.items():
 
                     if not self.sector_mask[s]:
                         continue
@@ -915,14 +919,20 @@ class MainWindow(tk.Frame):
             return False
 
 
-    def prepare_parsed_lc(self):
+    def parse_lc(self):
+        """ Parse the light curve by removing upper 1% outlies, detrending,
+        and correcting offsets among different sectores.
+
+        Returns:
+        """
         data_lst = {}
         for s in self.sector_lst:
 
+            # get the original time (t_lst) and flux (f_lst)
             t_lst, f_lst = self.lc_lst[s]
-            m = f_lst < np.percentile(f_lst, 99)
 
-            t_lst, f_lst = self.lc_lst[s]
+            # remove the upper 1% to get rid of flares
+            m = f_lst < np.percentile(f_lst, 99)
 
             # find offset of this sector
             if self.correct_offset:
@@ -930,6 +940,7 @@ class MainWindow(tk.Frame):
             else:
                 offset = 0.0
 
+            # detrend if lc_trends is not None
             if self.lc_trends is not None:
                 trendf = self.lc_trends[s]
                 newf_lst = f_lst / trendf * self.medflux_lst[s]
@@ -937,13 +948,14 @@ class MainWindow(tk.Frame):
             else:
                 newf_lst = f_lst - offset
 
-            data_lst[s] = (m, newf_lst)
+            data_lst[s] = (t_lst, newf_lst, m)
+
         return data_lst
 
     
     def fit_eclipse(self, eclipse, model):
 
-        data_lst = self.prepare_parsed_lc()
+        data_lst = self.parse_lc()
 
 
         if eclipse == 'primary':
@@ -958,8 +970,7 @@ class MainWindow(tk.Frame):
         # prepare phase list and allflux_lst to be fitted
         allphase_lst = []
         allflux_lst = []
-        for s, (m, newf_lst) in data_lst.items():
-            t_lst, f_lst = self.lc_lst[s]
+        for s, (t_lst, newf_lst, m) in data_lst.items():
 
             if not self.sector_mask[s]:
                 continue
@@ -988,7 +999,7 @@ class MainWindow(tk.Frame):
         allflux_lst  = allflux_lst[idx]
 
 
-        # out of elipse points
+        # out of eclipse points
         f0 = np.percentile(allflux_lst, 75)
 
         succ = False
@@ -1196,7 +1207,7 @@ class MainWindow(tk.Frame):
         """ Determine T0 and phase of secondary eclipse for contact binaries.
         """
 
-        data_lst = self.prepare_parsed_lc()
+        data_lst = self.parse_lc()
 
         ph1, ph2 = 0, 1
 
@@ -1213,8 +1224,7 @@ class MainWindow(tk.Frame):
             allph_lst[i] = []
             allflux_lst[i] = []
 
-        for s, (m, newf_lst) in data_lst.items():
-            t_lst, f_lst = self.lc_lst[s]
+        for s, (t_lst, newf_lst, m) in data_lst.items():
 
             if not self.sector_mask[s]:
                 continue
@@ -1760,10 +1770,16 @@ class ControlPanel(tk.Frame):
 
         #############################
         self.period_half_button = tk.Button(self,
-                    text='Period x 1/2', width=15, state = tk.DISABLED,
+                    text='x 1/2', width=7, state = tk.DISABLED,
                     command = lambda: self.change_period(0.5))
+        self.period_twothird_button = tk.Button(self,
+                    text='x 2/3', width=7, state = tk.DISABLED,
+                    command = lambda: self.change_period(2/3))
+        self.period_onehalf_button = tk.Button(self,
+                    text='x 3/2', width=7, state = tk.DISABLED,
+                    command = lambda: self.change_period(1.5))
         self.period_double_button = tk.Button(self,
-                    text='Period x 2', width=15, state = tk.DISABLED,
+                    text='x 2', width=7, state = tk.DISABLED,
                     command = lambda: self.change_period(2))
                                                 
         ######### period +1-1####
@@ -1809,10 +1825,14 @@ class ControlPanel(tk.Frame):
         ######## button layout ###########
         icol += 1
         self.period_label.grid(row=0, column=icol, columnspan=4, sticky=tk.EW)
-        self.period_half_button.grid(row=1, column=icol, columnspan=2,
-                                    sticky=tk.EW, padx=5, pady=2)
-        self.period_double_button.grid(row=1, column=icol+2, columnspan=2,
-                                    sticky=tk.EW, padx=5, pady=2)
+        self.period_half_button.grid(row=1, column=icol, columnspan=1,
+                                    sticky=tk.EW, padx=(5,2), pady=2)
+        self.period_twothird_button.grid(row=1, column=icol+1, columnspan=1,
+                                    sticky=tk.EW, padx=2, pady=2)
+        self.period_onehalf_button.grid(row=1, column=icol+2, columnspan=1,
+                                    sticky=tk.EW, padx=2, pady=2)
+        self.period_double_button.grid(row=1, column=icol+3, columnspan=1,
+                                    sticky=tk.EW, padx=(2,5), pady=2)
 
         for key, button in self.sub_period_buttons.items():
             button.grid(row=key+1, column=icol, sticky='w', padx=5, pady=2)
@@ -2354,6 +2374,8 @@ class ControlPanel(tk.Frame):
             self.offset_cb['state'] = tk.NORMAL
             # period control buttons
             self.period_double_button['state'] = tk.NORMAL
+            self.period_onehalf_button['state'] = tk.NORMAL
+            self.period_twothird_button['state'] = tk.NORMAL
             self.period_half_button['state']   = tk.NORMAL
             for key, button in self.sub_period_buttons.items():
                 button['state'] = tk.NORMAL
